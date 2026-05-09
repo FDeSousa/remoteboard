@@ -25,7 +25,11 @@ func WatchConfig(cfgPath string, onReload func(*config.Config)) (stop func(), er
 
 	done := make(chan struct{})
 	go func() {
-		// Debounce: editors often emit multiple events for a single save.
+		// debounce is nil (disabled) until a file-write event arms it.
+		// A nil channel in a Go select case is skipped, so the reload only
+		// fires 200 ms after the last write event — even if the editor emits
+		// multiple rapid events for a single save. After firing we reset to
+		// nil so subsequent loops do not re-trigger the reload.
 		var debounce <-chan time.Time
 		for {
 			select {
@@ -37,9 +41,12 @@ func WatchConfig(cfgPath string, onReload func(*config.Config)) (stop func(), er
 					return
 				}
 				if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
+					// (Re-)arm the debounce timer.
 					debounce = time.After(200 * time.Millisecond)
 				}
 			case <-debounce:
+				// Disarm so this case is skipped until the next write event.
+				debounce = nil
 				cfg, err := config.Load(cfgPath)
 				if err != nil {
 					log.Printf("watcher: reload error: %v", err)
